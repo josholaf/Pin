@@ -77,30 +77,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.35' }}
-          releaseName: "Pin ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.35' }}"
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.36' }}
+          releaseName: "Pin ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.36' }}"
           releaseBody: |
-            **Pin v0.1.35** — lightweight sticky-note style task & note app for Windows, macOS and Linux.
+            **Pin v0.1.36** — lightweight sticky-note style task & note app for Windows, macOS and Linux.
 
-            ## What's new in v0.1.35
+            ## What's new in v0.1.36
 
-            **Restores the features accidentally dropped by the v0.1.32–v0.1.34 list cleanup:**
-            - **Command palette** — <kbd>Ctrl/Cmd</kbd>+<kbd>K</kbd> to run any command: new note/folder, toggle theme, settings, trash, export/import, quick capture, graph view, Quick Note, web clipper, open or pin any note
-            - **Graph view** — animated force-directed map of your notes and their `[[wiki-links]]`; drag nodes, search to dim non-matches; opens from the titlebar button
-            - **Trash with restore** — deleting notes, folders and tasks is now a soft delete; restore or purge from the trash view
-            - **Favorites** — star notes from the right-click menu; favorites sort to the top
-            - **Pin note to desktop** — float any note as its own tiny always-on-top window
-            - **Quick capture box** — the Zap button / <kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> overlay; first line becomes the title
-            - **Quick Note window** — Spotlight-style capture via <kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>
-            - **Web clipper** — paste a URL to save the clean article, or clip selected text with <kbd>Ctrl/Cmd</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd>
-            - **Tray icon + hide to tray** — closing the main window hides it to the tray (Show Pin / Quick Note / Quit)
-            - **Stats bar + focus counter** — live notes/tasks/words/trash counts and today's focus sessions
-            - **Save safety net** — <kbd>Ctrl/Cmd</kbd>+<kbd>S</kbd> saves now, <kbd>Ctrl/Cmd</kbd>+<kbd>Z</kbd> undoes content (60-step history)
-            - **ZIP export / import** — back up the whole library as .md files in a ZIP
-            - **Icon & color pickers** back in the right-click note menu (now with 12 colors)
-            - Note rows stay clean (icon + title only) — all actions remain in the right-click menu
+            **Drag & drop for the whole library (issue #46):**
+            - **Drag notes into any folder** — grab a note row and drop it on a folder; it moves there instantly and stays saved
+            - **Drag folders to arrange** — drop on the top or bottom edge of another folder to reorder siblings
+            - **Nest folders** — drop a folder in the middle of another folder to put it inside; nested folders indent and can go deeper
+            - **Drag notes to arrange** — drop a note on the top/bottom edge of another note in the same folder to set your own order; the order persists across restarts
+            - **Drop a folder onto a note** to file the folder where that note lives
+            - Cycle protection: a folder can never be dropped inside itself or one of its own subfolders
+            - Clear drop hints: dashed accent outline = drop inside, accent bar = reorder above/below
 
-            Everything from v0.1.34 is kept: reminders with beep + toast + red due badge, the Inbox folder for scheduled notes, 12 note colors, README logo, hover/search polish.
+            Everything from v0.1.35 is kept: command palette, graph view, trash, favorites, pinned notes, quick capture, Quick Note window, web clipper, tray, ZIP backup, reminders + Inbox, 12 colors.
 
             ## Downloads
             - **Windows**: `.msi` or `.exe` (NSIS)

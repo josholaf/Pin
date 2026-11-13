@@ -26,8 +26,15 @@ import { QuickNoteCapture } from "./QuickNoteCapture";
 import { WebClipOverlay, WEB_CLIPS_FOLDER_ID, type WebClip } from "./WebClipper";
 import { GraphView } from "./GraphView";
 import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager";
+import "./dnd.css";
 
 const noteKey = (id: string) => "note:" + id;
+
+/** v0.1.36: drag & drop — folders can nest inside each other and carry a
+ *  manual order. The extra fields are optional, so older libraries load
+ *  unchanged and every folder simply starts at the top level. */
+type FolderDnD = NoteFolder & { parentId?: string | null; order?: number };
+type DropMode = "into" | "before" | "after";
 
 async function loadNotes(s: Store): Promise<Note[]> {
   const ids = (await s.get<string[]>("noteIds")) || [];
@@ -122,6 +129,10 @@ function App() {
   const [contextMenu, setContextMenu] = useState<{ type: "folder" | "note"; id: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
+  // v0.1.36: drag & drop state (issue #46)
+  const [noteOrder, setNoteOrder] = useState<string[]>([]);
+  const [dragItem, setDragItem] = useState<{ type: "note" | "folder"; id: string } | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ kind: "folder" | "note"; id: string; mode: DropMode } | null>(null);
   // Inline note editor (single window — no separate note windows/tabs anymore)
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
   const [noteTitle, setNoteTitle] = useState("");
@@ -202,6 +213,7 @@ function App() {
       const sk = await s.get<number>("streak"); if (typeof sk === "number") setStreak(sk);
       const la = await s.get<string>("lastActiveDate"); if (la) setLastActiveDate(la);
       const fd = await s.get<{ date: string; count: number }>("focusDone"); if (fd) setFocusDone(fd);
+      const no = await s.get<string[]>("noteOrder"); if (no) setNoteOrder(no);
       setNotes(await loadNotes(s));
       setReady(true);
     })();
@@ -225,9 +237,10 @@ function App() {
     if (ready && store && windowLabel === "main") {
       store.set("tasks", tasks);
       store.set("folders", folders);
+      store.set("noteOrder", noteOrder);
       store.save();
     }
-  }, [tasks, folders, store, ready, windowLabel]);
+  }, [tasks, folders, noteOrder, store, ready, windowLabel]);
 
   useEffect(() => {
     document.documentElement.style.setProperty("--app-font-size", settings.fontSize + "px");
@@ -475,6 +488,146 @@ function App() {
     setFolders(folders.map((f) => (f.id === id ? { ...f, name: name.trim() } : f)));
     setRenamingId(null);
   };
+
+  // ===== v0.1.36: drag & drop (issue #46) =====
+
+  /** True when `maybeChildId` sits anywhere inside the `folderId` subtree. */
+  const isDescendantFolder = (folderId: string, maybeChildId: string): boolean => {
+    let cur = ((activeFolders.find((f) => f.id === maybeChildId) as FolderDnD | undefined)?.parentId ?? null);
+    let guard = 0;
+    while (cur && guard++ < 50) {
+      if (cur === folderId) return true;
+      cur = ((activeFolders.find((f) => f.id === cur) as FolderDnD | undefined)?.parentId ?? null);
+    }
+    return false;
+  };
+
+  /** Drop mode from the pointer position on the row: top edge = before,
+   *  bottom edge = after, middle = into (folders only). */
+  const dropModeFor = (e: React.DragEvent, allowInto: boolean): DropMode => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const y = r.height > 0 ? (e.clientY - r.top) / r.height : 0.5;
+    if (!allowInto) return y < 0.5 ? "before" : "after";
+    if (y < 0.3) return "before";
+    if (y > 0.7) return "after";
+    return "into";
+  };
+
+  /** Move a note into a folder (null = unfiled). */
+  const moveNoteIntoFolder = (noteId: string, folderId: string | null) => {
+    const n = notes.find((x) => x.id === noteId);
+    if (!n || (n.folderId ?? null) === folderId) return;
+    const updated: Note = { ...n, folderId };
+    setNotes((prev) => prev.map((x) => (x.id === noteId ? updated : x)));
+    persistNote(updated);
+  };
+
+  /** Reorder a note before/after a target note in the same folder.
+   *  Materializes the full order once so later drags keep working, while
+   *  notes created afterwards still float to the top. */
+  const reorderNote = (dragId: string, targetId: string, mode: "before" | "after") => {
+    const ids = activeNotes.map((n) => n.id);
+    const from = ids.indexOf(dragId);
+    if (from >= 0) ids.splice(from, 1);
+    let to = ids.indexOf(targetId);
+    if (to < 0) return;
+    if (mode === "after") to += 1;
+    ids.splice(to, 0, dragId);
+    setNoteOrder(ids);
+  };
+
+  /** Drop a folder onto another: into = nest as a child, before/after =
+   *  reorder among the target's siblings. */
+  const moveFolderRelative = (dragId: string, targetId: string, mode: DropMode) => {
+    if (dragId === targetId || isDescendantFolder(dragId, targetId)) return;
+    const target = activeFolders.find((f) => f.id === targetId);
+    if (!target) return;
+    if (mode === "into") {
+      const childCount = activeFolders.filter((f) => ((f as FolderDnD).parentId ?? null) === targetId).length;
+      setFolders((prev) => prev.map((f) => (f.id === dragId ? { ...f, ...{ parentId: targetId, order: childCount } } : f)));
+      setExpandedFolders(new Set([...expandedFolders, targetId]));
+      return;
+    }
+    const tParent = ((target as FolderDnD).parentId ?? null);
+    const dragged = activeFolders.find((f) => f.id === dragId);
+    if (!dragged) return;
+    const siblings = activeFolders
+      .filter((f) => ((f as FolderDnD).parentId ?? null) === tParent && f.id !== dragId)
+      .sort((a, b) => ((a as FolderDnD).order ?? 0) - ((b as FolderDnD).order ?? 0) || a.createdAt - b.createdAt);
+    let idx = siblings.findIndex((f) => f.id === targetId);
+    if (idx < 0) return;
+    if (mode === "after") idx += 1;
+    siblings.splice(idx, 0, dragged);
+    const orderMap = new Map(siblings.map((f, i) => [f.id, i] as const));
+    setFolders((prev) => prev.map((f) => (orderMap.has(f.id) ? { ...f, ...{ parentId: tParent, order: orderMap.get(f.id) } } : f)));
+  };
+
+  /** Shared drag props for note rows (inbox, folder and unfiled lists). */
+  const noteDndProps = (note: Note) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => { setDragItem({ type: "note", id: note.id }); e.dataTransfer.effectAllowed = "move"; },
+    onDragEnd: () => { setDragItem(null); setDropTarget(null); },
+    onDragOver: (e: React.DragEvent) => {
+      if (!dragItem || dragItem.id === note.id) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDropTarget({ kind: "note", id: note.id, mode: dropModeFor(e, false) });
+    },
+    onDragLeave: () => setDropTarget((cur) => (cur && cur.kind === "note" && cur.id === note.id ? null : cur)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (dragItem && dragItem.id !== note.id) {
+        if (dragItem.type === "folder") {
+          // A folder dropped on a note lands in that note's folder.
+          moveFolderRelative(dragItem.id, note.folderId ?? "", "into");
+        } else {
+          const dn = notes.find((x) => x.id === dragItem.id);
+          if (dn && (dn.folderId ?? null) !== (note.folderId ?? null)) moveNoteIntoFolder(dragItem.id, note.folderId ?? null);
+          else reorderNote(dragItem.id, note.id, dropModeFor(e, false) === "after" ? "after" : "before");
+        }
+      }
+      setDragItem(null);
+      setDropTarget(null);
+    },
+  });
+  const noteDropClass = (note: Note) =>
+    dragItem?.type === "note" && dragItem.id !== note.id && dropTarget?.kind === "note" && dropTarget.id === note.id
+      ? " drop-" + dropTarget.mode
+      : "";
+  const noteDraggingClass = (note: Note) => (dragItem?.type === "note" && dragItem.id === note.id ? " dragging" : "");
+
+  /** Shared drag props for folder rows. */
+  const folderDndProps = (folder: NoteFolder) => ({
+    draggable: true,
+    onDragStart: (e: React.DragEvent) => { setDragItem({ type: "folder", id: folder.id }); e.dataTransfer.effectAllowed = "move"; },
+    onDragEnd: () => { setDragItem(null); setDropTarget(null); },
+    onDragOver: (e: React.DragEvent) => {
+      if (!dragItem) return;
+      if (dragItem.type === "folder" && (dragItem.id === folder.id || isDescendantFolder(dragItem.id, folder.id))) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      // A note dropped anywhere on a folder moves INTO it; only folder-on-folder
+      // drags use the edge zones for reordering.
+      setDropTarget({ kind: "folder", id: folder.id, mode: dragItem.type === "note" ? "into" : dropModeFor(e, true) });
+    },
+    onDragLeave: () => setDropTarget((cur) => (cur && cur.kind === "folder" && cur.id === folder.id ? null : cur)),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (dragItem) {
+        if (dragItem.type === "note") moveNoteIntoFolder(dragItem.id, folder.id);
+        else moveFolderRelative(dragItem.id, folder.id, dropModeFor(e, true));
+      }
+      setDragItem(null);
+      setDropTarget(null);
+    },
+  });
+  const folderDropClass = (folder: NoteFolder) =>
+    dropTarget?.kind === "folder" && dropTarget.id === folder.id && dragItem && !(dragItem.type === "folder" && (dragItem.id === folder.id || isDescendantFolder(dragItem.id, folder.id)))
+      ? " drop-" + dropTarget.mode
+      : "";
+  const folderDraggingClass = (folder: NoteFolder) => (dragItem?.type === "folder" && dragItem.id === folder.id ? " dragging" : "");
   const renameNote = (id: string, title: string) => {
     const n = notes.find((x) => x.id === id);
     if (!n) { setRenamingId(null); return; }
@@ -925,8 +1078,14 @@ function App() {
   const applyTagFilter = (n: Note) => !tagFilter || (n.tags || []).includes(tagFilter);
   const matches = (n: Note) => noteMatches(n) && applyTagFilter(n);
 
+  // v0.1.36: manual note order from drag & drop. Notes that were never
+  // ordered rank -1 so they stay on top (newest first), like before.
+  const noteOrderRank = (id: string) => { const i = noteOrder.indexOf(id); return i === -1 ? -1 : i; };
+
   const activeNotes = notes.filter((n) => !n.deletedAt)
-    .sort((x, y) => Number(y.favorite || false) - Number(x.favorite || false) || y.createdAt - x.createdAt);
+    .sort((x, y) => Number(y.favorite || false) - Number(x.favorite || false)
+      || noteOrderRank(x.id) - noteOrderRank(y.id)
+      || y.createdAt - x.createdAt);
   const trashedNotes = notes.filter((n) => n.deletedAt);
   const allTags = Array.from(new Set(activeNotes.flatMap((n) => n.tags || []))).sort();
   const searchMatches = q ? activeNotes.filter(matches).length : 0;
@@ -1081,6 +1240,69 @@ function App() {
   const pq = paletteQuery.trim().toLowerCase();
   const visibleItems = pq ? paletteItems.filter((it) => fuzzy(pq, it.title + " " + it.subtitle)) : paletteItems.slice(0, 12);
 
+  // ===== v0.1.36: render folders as a tree (issue #46) =====
+  const folderChildren = (parentId: string | null): NoteFolder[] =>
+    activeFolders
+      .filter((f) => ((f as FolderDnD).parentId ?? null) === parentId)
+      .sort((a, b) => ((a as FolderDnD).order ?? 0) - ((b as FolderDnD).order ?? 0) || a.createdAt - b.createdAt);
+
+  const folderVisible = (folder: NoteFolder): boolean => {
+    if (!q && !tagFilter) return true;
+    if (folder.name.toLowerCase().includes(q)) return true;
+    if (activeNotes.some((n) => n.folderId === folder.id && matches(n))) return true;
+    return folderChildren(folder.id).some(folderVisible);
+  };
+
+  const renderFolderBlock = (folder: NoteFolder, depth: number) => {
+    const folderNotes = activeNotes.filter((n) => n.folderId === folder.id && matches(n));
+    const isExpanded = q || tagFilter ? true : expandedFolders.has(folder.id);
+    const FolderIcon = isExpanded ? FolderOpen : Folder;
+    if (!folderVisible(folder)) return null;
+    return (
+      <div key={folder.id} className="folder-block" style={depth > 0 ? { marginLeft: depth * 14 } : undefined}>
+        <div
+          className={"folder-row" + folderDraggingClass(folder) + folderDropClass(folder)}
+          title="Drag to another folder to nest, or drop on a row edge to reorder"
+          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "folder", id: folder.id, x: e.clientX, y: e.clientY }); }}
+          {...folderDndProps(folder)}
+        >
+          <button className="icon-btn expand-btn" onClick={() => toggleFolder(folder.id)}>{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>
+          <FolderIcon size={14} />
+          {renamingId === folder.id ? (
+            <input className="rename-input" value={renameText} autoFocus onChange={(e) => setRenameText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") renameFolder(folder.id, renameText); if (e.key === "Escape") setRenamingId(null); }} onBlur={() => renameFolder(folder.id, renameText)} />
+          ) : (
+            <span className="folder-name" onDoubleClick={() => startRename(folder.id, folder.name)}>{folder.name}</span>
+          )}
+          <span className="folder-count">{folderNotes.length}</span>
+        </div>
+        {isExpanded && (
+          <>
+            <div className="folder-notes">
+              {folderNotes.map((note) => {
+                const NoteIcon = getIcon(note.icon).Icon;
+                const due = note.reminderAt !== undefined && note.reminderAt <= Date.now();
+                return (
+                  <div key={note.id} className={"note-row" + noteDraggingClass(note) + noteDropClass(note)} title="Right-click for options" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "note", id: note.id, x: e.clientX, y: e.clientY }); }} {...noteDndProps(note)}>
+                    <NoteIcon size={13} />
+                    {renamingId === note.id ? (
+                      <input className="rename-input" value={renameText} autoFocus onChange={(e) => setRenameText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") renameNote(note.id, renameText); if (e.key === "Escape") setRenamingId(null); }} onBlur={() => renameNote(note.id, renameText)} />
+                    ) : (
+                      <button className="note-open-btn" onClick={() => openNote(note)}>{note.title || "Untitled"}</button>
+                    )}
+                    {note.reminderAt !== undefined && (
+                      <Clock size={11} className={"reminder-badge" + (due ? " due" : "")} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {folderChildren(folder.id).map((child) => renderFolderBlock(child, depth + 1))}
+          </>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="pin-window" data-tauri-drag-region style={{ fontSize: settings.fontSize, fontFamily: settings.fontFamily }}>
       <header className="titlebar" data-tauri-drag-region>
@@ -1212,7 +1434,7 @@ function App() {
                   const NoteIcon = getIcon(note.icon).Icon;
                   const due = note.reminderAt !== undefined && note.reminderAt <= Date.now();
                   return (
-                    <div key={note.id} className="note-row" title="Right-click for options" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "note", id: note.id, x: e.clientX, y: e.clientY }); }}>
+                    <div key={note.id} className={"note-row" + noteDraggingClass(note) + noteDropClass(note)} title="Right-click for options" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "note", id: note.id, x: e.clientX, y: e.clientY }); }} {...noteDndProps(note)}>
                       <NoteIcon size={13} />
                       <button className="note-open-btn" onClick={() => openNote(note)}>{note.title || "Untitled"}</button>
                       <Clock size={11} className={"reminder-badge" + (due ? " due" : "")} />
@@ -1222,52 +1444,15 @@ function App() {
               </div>
             )}
           </div>
-          {activeFolders.map((folder) => {
-            const folderNotes = activeNotes.filter((n) => n.folderId === folder.id && matches(n));
-            const isExpanded = q || tagFilter ? true : expandedFolders.has(folder.id);
-            const FolderIcon = isExpanded ? FolderOpen : Folder;
-            if ((q || tagFilter) && !folder.name.toLowerCase().includes(q) && folderNotes.length === 0) return null;
-            return (
-              <div key={folder.id} className="folder-block">
-                <div className="folder-row" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "folder", id: folder.id, x: e.clientX, y: e.clientY }); }}>
-                  <button className="icon-btn expand-btn" onClick={() => toggleFolder(folder.id)}>{isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</button>
-                  <FolderIcon size={14} />
-                  {renamingId === folder.id ? (
-                    <input className="rename-input" value={renameText} autoFocus onChange={(e) => setRenameText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") renameFolder(folder.id, renameText); if (e.key === "Escape") setRenamingId(null); }} onBlur={() => renameFolder(folder.id, renameText)} />
-                  ) : (
-                    <span className="folder-name" onDoubleClick={() => startRename(folder.id, folder.name)}>{folder.name}</span>
-                  )}
-                  <span className="folder-count">{folderNotes.length}</span>
-                </div>
-                {isExpanded && (
-                  <div className="folder-notes">
-                    {folderNotes.map((note) => {
-                      const NoteIcon = getIcon(note.icon).Icon;
-                      const due = note.reminderAt !== undefined && note.reminderAt <= Date.now();
-                      return (
-                        <div key={note.id} className="note-row" title="Right-click for options" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "note", id: note.id, x: e.clientX, y: e.clientY }); }}>
-                          <NoteIcon size={13} />
-                          {renamingId === note.id ? (
-                            <input className="rename-input" value={renameText} autoFocus onChange={(e) => setRenameText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") renameNote(note.id, renameText); if (e.key === "Escape") setRenamingId(null); }} onBlur={() => renameNote(note.id, renameText)} />
-                          ) : (
-                            <button className="note-open-btn" onClick={() => openNote(note)}>{note.title || "Untitled"}</button>
-                          )}
-                          {note.reminderAt !== undefined && (
-                            <Clock size={11} className={"reminder-badge" + (due ? " due" : "")} />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {/* v0.1.36: folders render as a tree — drag a folder onto another
+              to nest it, onto a row edge to reorder, and drag notes into
+              any folder. */}
+          {folderChildren(null).map((folder) => renderFolderBlock(folder, 0))}
           {unfiledNotes.map((note) => {
             const NoteIcon = getIcon(note.icon).Icon;
             const due = note.reminderAt !== undefined && note.reminderAt <= Date.now();
             return (
-              <div key={note.id} className="note-row" title="Right-click for options" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "note", id: note.id, x: e.clientX, y: e.clientY }); }}>
+              <div key={note.id} className={"note-row" + noteDraggingClass(note) + noteDropClass(note)} title="Right-click for options" onContextMenu={(e) => { e.preventDefault(); setContextMenu({ type: "note", id: note.id, x: e.clientX, y: e.clientY }); }} {...noteDndProps(note)}>
                 <NoteIcon size={13} />
                 {renamingId === note.id ? (
                   <input className="rename-input" value={renameText} autoFocus onChange={(e) => setRenameText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") renameNote(note.id, renameText); if (e.key === "Escape") setRenamingId(null); }} onBlur={() => renameNote(note.id, renameText)} />
