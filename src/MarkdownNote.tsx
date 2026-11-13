@@ -3,6 +3,7 @@ import {
   Moon, Sun, X, Bold, Italic, List, ListOrdered, CheckSquare,
   Heading, Code, TextQuote, Link as LinkIcon, Strikethrough, ArrowLeft,
   Pin, Download, Copy, Table, Highlighter, Palette, ImagePlus, Mic, Square, LayoutGrid, Link2, Maximize2, FileText,
+  Undo2, Redo2,
 } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, writeFile } from "@tauri-apps/plugin-fs";
@@ -31,6 +32,9 @@ type Props = {
   setNoteTitle: (v: string) => void;
   noteContent: string;
   setNoteContent: (v: string) => void;
+  /** v0.1.37: undo / redo hooks from the editor history in App (issue #47). */
+  onUndo?: () => void;
+  onRedo?: () => void;
   noteColor: NoteColor;
   setNoteColor: (c: NoteColor) => void;
   noteIcon: string;
@@ -510,6 +514,24 @@ export function MarkdownNote(p: Props) {
     insertImageFiles(imageFiles);
   };
 
+  // v0.1.37: common text-editor shortcuts, shared by the main editor and
+  // focus mode (issue #47). Works on the current selection via insertMd.
+  const applyFormatKeys = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    if (!isMd) return;
+    const k = e.key.toLowerCase();
+    if (k === "b") { e.preventDefault(); insertMd("**", "**"); }
+    else if (k === "i") { e.preventDefault(); insertMd("*", "*"); }
+    else if (k === "e") { e.preventDefault(); insertMd(BACKTICK, BACKTICK); }
+    else if (k === "k") { e.preventDefault(); insertMd("[", "](https://)"); }
+    else if (e.shiftKey && k === "x") { e.preventDefault(); insertMd("~~", "~~"); }
+    else if (e.shiftKey && k === "h") { e.preventDefault(); insertMd("==", "=="); }
+    else if (e.shiftKey && e.code === "Digit7") { e.preventDefault(); insertMd("1. "); }
+    else if (e.shiftKey && e.code === "Digit8") { e.preventDefault(); insertMd("- "); }
+    else if (e.shiftKey && e.code === "Digit9") { e.preventDefault(); insertMd("- [ ] "); }
+    else if (e.shiftKey && e.code === "Period") { e.preventDefault(); insertMd("> "); }
+  };
+
   const onEditorKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // v0.1.10: Esc closes the tag picker first (issue #24)
     if (tagPanel && e.key === "Escape") { e.preventDefault(); setTagPanel(null); return; }
@@ -564,9 +586,7 @@ export function MarkdownNote(p: Props) {
       }
     }
     if (e.ctrlKey || e.metaKey) {
-      const k = e.key.toLowerCase();
-      if (k === "b" && isMd) { e.preventDefault(); insertMd("**", "**"); }
-      else if (k === "i" && isMd) { e.preventDefault(); insertMd("*", "*"); }
+      applyFormatKeys(e);
     }
   };
 
@@ -743,20 +763,22 @@ export function MarkdownNote(p: Props) {
               "/tags" slash picker now (issue #24). */}
           {isMd && (
             <div className="md-toolbar">
+              <button type="button" className="icon-btn" title="Undo (Ctrl+Z)" onMouseDown={startToolbarAction} onClick={() => { if (p.onUndo) p.onUndo(); }}><Undo2 size={14} /></button>
+              <button type="button" className="icon-btn" title="Redo (Ctrl+Y or Ctrl+Shift+Z)" onMouseDown={startToolbarAction} onClick={() => { if (p.onRedo) p.onRedo(); }}><Redo2 size={14} /></button>
               <button type="button" className="icon-btn" title="Bold (Ctrl+B)" onMouseDown={startToolbarAction} onClick={() => insertMd("**", "**")}><Bold size={14} /></button>
               <button type="button" className="icon-btn" title="Italic (Ctrl+I)" onMouseDown={startToolbarAction} onClick={() => insertMd("*", "*")}><Italic size={14} /></button>
-              <button type="button" className="icon-btn" title="Strikethrough" onMouseDown={startToolbarAction} onClick={() => insertMd("~~", "~~")}><Strikethrough size={14} /></button>
-              <button type="button" className="icon-btn" title="Highlight (==text==)" onMouseDown={startToolbarAction} onClick={() => insertMd("==", "==")}><Highlighter size={14} /></button>
+              <button type="button" className="icon-btn" title="Strikethrough (Ctrl+Shift+X)" onMouseDown={startToolbarAction} onClick={() => insertMd("~~", "~~")}><Strikethrough size={14} /></button>
+              <button type="button" className="icon-btn" title="Highlight (Ctrl+Shift+H)" onMouseDown={startToolbarAction} onClick={() => insertMd("==", "==")}><Highlighter size={14} /></button>
               <button type="button" className="icon-btn" title="Colored text" onMouseDown={startToolbarAction} onClick={() => insertMd(COLOR_SPAN_OPEN, COLOR_SPAN_CLOSE)}><Palette size={14} /></button>
               <button type="button" className="icon-btn" title="Wiki-link ([[note]])" onMouseDown={startToolbarAction} onClick={() => insertMd("[[", "]]")}><Link2 size={14} /></button>
               <button type="button" className="icon-btn" title="Heading" onMouseDown={startToolbarAction} onClick={() => insertMd("## ")}><Heading size={14} /></button>
-              <button type="button" className="icon-btn" title="Inline code" onMouseDown={startToolbarAction} onClick={() => insertMd(BACKTICK, BACKTICK)}><Code size={14} /></button>
-              <button type="button" className="icon-btn" title="Bullet list" onMouseDown={startToolbarAction} onClick={() => insertMd("- ")}><List size={14} /></button>
-              <button type="button" className="icon-btn" title="Numbered list" onMouseDown={startToolbarAction} onClick={() => insertMd("1. ")}><ListOrdered size={14} /></button>
-              <button type="button" className="icon-btn" title="Task" onMouseDown={startToolbarAction} onClick={() => insertMd("- [ ] ")}><CheckSquare size={14} /></button>
+              <button type="button" className="icon-btn" title="Inline code (Ctrl+E)" onMouseDown={startToolbarAction} onClick={() => insertMd(BACKTICK, BACKTICK)}><Code size={14} /></button>
+              <button type="button" className="icon-btn" title="Bullet list (Ctrl+Shift+8)" onMouseDown={startToolbarAction} onClick={() => insertMd("- ")}><List size={14} /></button>
+              <button type="button" className="icon-btn" title="Numbered list (Ctrl+Shift+7)" onMouseDown={startToolbarAction} onClick={() => insertMd("1. ")}><ListOrdered size={14} /></button>
+              <button type="button" className="icon-btn" title="Task (Ctrl+Shift+9)" onMouseDown={startToolbarAction} onClick={() => insertMd("- [ ] ")}><CheckSquare size={14} /></button>
               <button type="button" className="icon-btn" title="Table" onMouseDown={startToolbarAction} onClick={() => insertMd("\n| Column | Column |\n| --- | --- |\n| Cell | Cell |\n\n")}><Table size={14} /></button>
-              <button type="button" className="icon-btn" title="Quote" onMouseDown={startToolbarAction} onClick={() => insertMd("> ")}><TextQuote size={14} /></button>
-              <button type="button" className="icon-btn" title="Link" onMouseDown={startToolbarAction} onClick={() => insertMd("[", "](https://)")}><LinkIcon size={14} /></button>
+              <button type="button" className="icon-btn" title="Quote (Ctrl+Shift+.)" onMouseDown={startToolbarAction} onClick={() => insertMd("> ")}><TextQuote size={14} /></button>
+              <button type="button" className="icon-btn" title="Link (Ctrl+K)" onMouseDown={startToolbarAction} onClick={() => insertMd("[", "](https://)")}><LinkIcon size={14} /></button>
               <button type="button" className="icon-btn" title="Add photo (or paste an image)" onMouseDown={startToolbarAction} onClick={() => { if (fileInputRef.current) fileInputRef.current.click(); }}><ImagePlus size={14} /></button>
               <div className="cols-menu-wrapper">
                 <button type="button" className="icon-btn" title="Arrange selected photos in columns" onMouseDown={startToolbarAction} onClick={() => setColsMenuOpen((v) => !v)}><LayoutGrid size={14} /></button>
@@ -954,7 +976,7 @@ export function MarkdownNote(p: Props) {
                 onChange={(e) => { p.setNoteContent(e.target.value); requestAnimationFrame(typewriterScroll); }}
                 onKeyUp={typewriterScroll}
                 onClick={typewriterScroll}
-                onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setFocusMode(false); } }}
+                onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); setFocusMode(false); } else applyFormatKeys(e); }}
                 placeholder="Just write…"
                 autoFocus
                 spellCheck={false}
@@ -971,4 +993,5 @@ export function MarkdownNote(p: Props) {
     </div>
   );
 }
+
 

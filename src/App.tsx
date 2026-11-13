@@ -160,7 +160,11 @@ function App() {
   // v0.1.6: focus sessions per day, save safety net (issue #16)
   const [focusDone, setFocusDone] = useState<{ date: string; count: number } | null>(null);
   const [savedAt, setSavedAt] = useState(0);
+  // v0.1.37: real undo + redo history for the note editor (issue #16/#47).
+  // `past` holds previous content snapshots (throttled while typing) and
+  // `future` holds undone ones so Ctrl+Y / Ctrl+Shift+Z can re-apply them.
   const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
   const lastPushRef = useRef(0);
   // v0.1.14: note reminders (issue #34) — draft input in the context menu
   // and the toast shown when a reminder comes due.
@@ -400,6 +404,7 @@ function App() {
     setGraphOpen(false);
     // v0.1.6: fresh undo history per opened note (issue #16)
     undoStackRef.current = [];
+    redoStackRef.current = [];
     lastPushRef.current = 0;
   };
   const backToList = () => {
@@ -408,8 +413,9 @@ function App() {
 
   // v0.1.6: save safety net (issue #16).
   // Ctrl+S forces an immediate save and flashes "Saved" in the status bar;
-  // Ctrl+Z restores the last content snapshot (60-deep, throttled while
-  // typing) so a bad paste can never destroy a long note.
+  // Ctrl+Z steps back through content snapshots and Ctrl+Y / Ctrl+Shift+Z
+  // steps forward again (100-deep, throttled while typing) so a bad paste
+  // can never destroy a long note (v0.1.37: redo added, issue #47).
   const saveNow = async () => {
     if (!store || !openNoteId) return;
     const existing = await store.get<Note>(noteKey(openNoteId));
@@ -434,15 +440,26 @@ function App() {
     const stack = undoStackRef.current;
     if (!stack.length) return;
     const prev = stack.pop() as string;
+    redoStackRef.current.push(noteContent);
     setNoteContent(prev);
+  };
+  // v0.1.37: redo — re-applies what Ctrl+Z undid (issue #47)
+  const redoOne = () => {
+    const stack = redoStackRef.current;
+    if (!stack.length) return;
+    const next = stack.pop() as string;
+    undoStackRef.current.push(noteContent);
+    setNoteContent(next);
   };
   const setNoteContentTracked = (v: string) => {
     const now = Date.now();
     if (now - lastPushRef.current > 500) {
       undoStackRef.current.push(noteContent);
-      if (undoStackRef.current.length > 60) undoStackRef.current.shift();
+      if (undoStackRef.current.length > 100) undoStackRef.current.shift();
       lastPushRef.current = now;
     }
+    // any fresh edit invalidates the redo history
+    redoStackRef.current = [];
     setNoteContent(v);
   };
   useEffect(() => {
@@ -451,7 +468,8 @@ function App() {
       if (e.ctrlKey || e.metaKey) {
         const k = e.key.toLowerCase();
         if (k === "s") { e.preventDefault(); saveNow(); }
-        else if (k === "z") { e.preventDefault(); undoOne(); }
+        else if (k === "z" && !e.shiftKey) { e.preventDefault(); undoOne(); }
+        else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redoOne(); }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1177,6 +1195,8 @@ function App() {
         setNoteTitle={setNoteTitle}
         noteContent={noteContent}
         setNoteContent={setNoteContentTracked}
+        onUndo={undoOne}
+        onRedo={redoOne}
         noteColor={noteColor}
         setNoteColor={setNoteColor}
         noteIcon={noteIcon}
@@ -1695,3 +1715,4 @@ function App() {
 }
 
 export default App;
+

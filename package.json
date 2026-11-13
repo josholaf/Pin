@@ -1,7 +1,7 @@
 {
   "name": "pin",
   "private": true,
-  "version": "0.1.36",
+  "version": "0.1.37",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -35,3 +35,4 @@
     "vite": "^5.4.2"
   }
 }
+

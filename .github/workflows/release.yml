@@ -77,23 +77,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.36' }}
-          releaseName: "Pin ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.36' }}"
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.37' }}
+          releaseName: "Pin ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.37' }}"
           releaseBody: |
-            **Pin v0.1.36** — lightweight sticky-note style task & note app for Windows, macOS and Linux.
+            **Pin v0.1.37** — lightweight sticky-note style task & note app for Windows, macOS and Linux.
 
-            ## What's new in v0.1.36
+            ## What's new in v0.1.37
 
-            **Drag & drop for the whole library (issue #46):**
-            - **Drag notes into any folder** — grab a note row and drop it on a folder; it moves there instantly and stays saved
-            - **Drag folders to arrange** — drop on the top or bottom edge of another folder to reorder siblings
-            - **Nest folders** — drop a folder in the middle of another folder to put it inside; nested folders indent and can go deeper
-            - **Drag notes to arrange** — drop a note on the top/bottom edge of another note in the same folder to set your own order; the order persists across restarts
-            - **Drop a folder onto a note** to file the folder where that note lives
-            - Cycle protection: a folder can never be dropped inside itself or one of its own subfolders
-            - Clear drop hints: dashed accent outline = drop inside, accent bar = reorder above/below
+            **Undo, redo & editor shortcuts (issue #47):**
+            - **Undo (Ctrl+Z) and Redo (Ctrl+Y or Ctrl+Shift+Z)** in the note editor — a real 100-step history with a redo stack, plus Undo/Redo buttons in the toolbar
+            - **Bold (Ctrl+B)** and **Italic (Ctrl+I)** on the selection
+            - **Link (Ctrl+K)**, **inline code (Ctrl+E)**, **strikethrough (Ctrl+Shift+X)**, **highlight (Ctrl+Shift+H)**
+            - **Bullet list (Ctrl+Shift+8)**, **numbered list (Ctrl+Shift+7)**, **task (Ctrl+Shift+9)**, **quote (Ctrl+Shift+.)**
+            - All shortcuts also work in focus mode, and Ctrl+S still force-saves
 
-            Everything from v0.1.35 is kept: command palette, graph view, trash, favorites, pinned notes, quick capture, Quick Note window, web clipper, tray, ZIP backup, reminders + Inbox, 12 colors.
+            Everything from v0.1.36 is kept: drag & drop for notes and folders, folder nesting, plus command palette, graph view, trash, favorites, pinned notes, quick capture, Quick Note window, web clipper, tray, ZIP backup, reminders + Inbox, 12 colors.
 
             ## Downloads
             - **Windows**: `.msi` or `.exe` (NSIS)
@@ -111,3 +109,4 @@ jobs:
           npm run tauri build -- --bundles msi > diag-msi.log 2>&1 || true
           { grep -iE "error|failed|panicked" diag-nsis.log | tail -n 25; grep -iE "error|failed|panicked" diag-msi.log | tail -n 25; tail -n 20 diag-msi.log; } > hits.txt || true
           awk 'length($0)>0' hits.txt | tail -n 10 | while IFS= read -r line; do echo "::error::${line}"; done
+
