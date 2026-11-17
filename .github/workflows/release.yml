@@ -77,12 +77,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.37' }}
-          releaseName: "Pin ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.37' }}"
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.38' }}
+          releaseName: "Pin ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.38' }}"
           releaseBody: |
-            **Pin v0.1.37** — lightweight sticky-note style task & note app for Windows, macOS and Linux.
+            **Pin v0.1.38** — lightweight sticky-note style task & note app for Windows, macOS and Linux.
 
-            ## What's new in v0.1.37
+            ## What's new in v0.1.38
+
+            **Unified note export:**
+            - One Download menu exports the current note as Markdown, plain text, or PDF.
+            - Restored the complete Markdown note editor and its stylesheet after an accidental truncated-file commit.
 
             **Undo, redo & editor shortcuts (issue #47):**
             - **Undo (Ctrl+Z) and Redo (Ctrl+Y or Ctrl+Shift+Z)** in the note editor — a real 100-step history with a redo stack, plus Undo/Redo buttons in the toolbar
